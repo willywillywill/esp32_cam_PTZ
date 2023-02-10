@@ -10,18 +10,18 @@
 
 
 // servo 
-#define level_servo_pin GPIO_NUM_12
+#define horizontal_servo_pin GPIO_NUM_12
 #define vertical_servo_pin GPIO_NUM_4
 #define servo_left_W 30
 #define servo_stop_W 90
 #define servo_right_W 119
-Servo level_servo, vertical_servo;
+Servo horizontal_servo, vertical_servo;
 int16_t vertical_val;
 int8_t servo_move_val = 20;
 
 // BH1750
-#define I2C_SDA  GPIO_NUM_15
-#define I2C_SCL  GPIO_NUM_13
+#define I2C_SDA  GPIO_NUM_14
+#define I2C_SCL  GPIO_NUM_15
 #define MAX_LUX 150
 BH1750 lightMeter;
 // light out
@@ -53,7 +53,6 @@ static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %
 IPAddress local_IP;
 httpd_handle_t stream_httpd = NULL;
 httpd_handle_t camera_httpd = NULL;
-
 
 esp_err_t camera_handler(httpd_req_t *req) {
     camera_config_t config_camera;
@@ -143,82 +142,182 @@ esp_err_t camera_handler(httpd_req_t *req) {
     }
     return res;
 }
-static esp_err_t command_handler(httpd_req_t *req) {
-
-    char content[32] = {0,};
-
-    size_t recv_size = min(req->content_len, sizeof(content));
-
-    int ret = httpd_req_recv(req, content, recv_size);
-    if (ret <= 0) {
-        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-            httpd_resp_send_408(req);
-        }
-        return ESP_FAIL;
-    }
 
 
-    if (!strcmp(content, "cmd=top")) {
-        vertical_val += servo_move_val;
-        vertical_servo.write(vertical_val);
-    }
-    else if (!strcmp(content, "cmd=bottom")) {
-        vertical_val -= servo_move_val;
-        vertical_servo.write(vertical_val);
-    }
-    else if (!strcmp(content, "cmd=leftT")) {
-        level_servo.write(servo_left_W);
-    }
-    else if (!strcmp(content, "cmd=leftF")) {
-        level_servo.write(servo_stop_W);
-    }
-    else if (!strcmp(content, "cmd=rightT")) {
-        level_servo.write(servo_right_W);
-    }
-    else if (!strcmp(content, "cmd=rightF")) {
-        level_servo.write(servo_stop_W);
-    }
-    else if (!strcmp(content, "cmd=init")) {
-        vertical_servo.write(0);
-    }
-    else if (!strcmp(content, "cmd=attackT")) {
-        digitalWrite(light_pin, HIGH);
-    }
-    else if (!strcmp(content, "cmd=attackF")) {
-        digitalWrite(light_pin, LOW);
-    }
-    //Serial.println(content);
-
-    return ESP_OK;
-}
 static esp_err_t light_handler(httpd_req_t *req) {
-
-
     while (true) {
 
         char data[4];
         float lux = lightMeter.readLightLevel();
+
         if (lux > MAX_LUX){
             data[0] = '1';
         }
         else {
             data[0] = '0';
         }
-        //Serial.println(lux);
+
+        Serial.print("Light: ");
+        Serial.print(lux);
+        Serial.println(" lx");
         httpd_resp_set_type(req, "application/json");
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
         httpd_resp_send(req, data, strlen(data));
+
+
     }
-
-
     return ESP_OK;
 }
 
+static esp_err_t cmd_handler(httpd_req_t *req) {
+    char*  buf;
+    size_t buf_len;
+    char variable[32] = {0,};
+    char value[32] = {0,};
+
+    buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        buf = (char*)malloc(buf_len);
+        Serial.println(buf);
+        if(!buf){
+            httpd_resp_send_500(req);
+            return ESP_FAIL;
+        }
+        if (httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            if (httpd_query_key_value(buf, "var", variable, sizeof(variable)) == ESP_OK &&
+                httpd_query_key_value(buf, "val", value, sizeof(value)) == ESP_OK) {
+            } else {
+                free(buf);
+                Serial.println(buf);
+                httpd_resp_send_404(req);
+                return ESP_FAIL;
+            }
+        } else {
+            free(buf);
+            Serial.println(buf);
+            httpd_resp_send_404(req);
+            return ESP_FAIL;
+        }
+        Serial.println(buf);
+        free(buf);
+    } else {
+        httpd_resp_send_404(req);
+        Serial.println(ESP_FAIL);
+        return ESP_FAIL;
+    }
+
+    int val = atoi(value);
+    sensor_t * s = esp_camera_sensor_get();
+    int res = 0;
+
+    if (!strcmp(variable, "top")) {
+        vertical_val += servo_move_val;
+        vertical_servo.write(vertical_val);
+    }
+    else if (!strcmp(variable, "bottom")) {
+        vertical_val -= servo_move_val;
+        vertical_servo.write(vertical_val);
+    }
+    else if (!strcmp(variable, "go-left")) {
+        horizontal_servo.write(servo_left_W);
+    }
+    else if (!strcmp(variable, "stop-left")) {
+        horizontal_servo.write(servo_stop_W);
+    }
+    else if (!strcmp(variable, "go-right")) {
+        horizontal_servo.write(servo_right_W);
+    }
+    else if (!strcmp(variable, "stop-right")) {
+        horizontal_servo.write(servo_stop_W);
+    }
+    else if (!strcmp(variable, "go-attack")) {
+        digitalWrite(light_pin, HIGH);
+    }
+    else if (!strcmp(variable, "stop-attack")) {
+        digitalWrite(light_pin, LOW);
+    }
+
+    else if (!strcmp(variable, "init")) {
+
+    }
+    else if (!strcmp(variable, "test")) {
+
+    }
+    
+
+
+    if(res){
+        return httpd_resp_send_500(req);
+    }
+
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    return httpd_resp_send(req, NULL, 0);
+}
+
+void startCameraServer(){
+    httpd_config_t config_http = HTTPD_DEFAULT_CONFIG();
+    config_http.server_port = 80;
+    config_http.stack_size = 8096;
+
+    httpd_uri_t camera_uri = {
+            .uri      = "/camera",
+            .method   = HTTP_GET,
+            .handler  = camera_handler,
+            .user_ctx = NULL
+    };
+    httpd_uri_t light_uri = {
+            .uri      = "/light",
+            .method   = HTTP_GET,
+            .handler  = light_handler,
+            .user_ctx = NULL
+    };
+    httpd_uri_t cmd_uri = {
+            .uri      ="/cmd",
+            .method   = HTTP_GET,
+            .handler  = cmd_handler,
+            .user_ctx = NULL
+    };
+
+    if (httpd_start(&camera_httpd, &config_http) == ESP_OK) {
+        httpd_register_uri_handler(camera_httpd, &cmd_uri);
+        httpd_register_uri_handler(camera_httpd, &light_uri);
+
+    }
+
+    config_http.server_port += 1 ;
+    config_http.ctrl_port += 1 ;
+
+    if (httpd_start(&stream_httpd, &config_http) == ESP_OK) {
+        httpd_register_uri_handler(stream_httpd, &camera_uri);
+    }
+}
+
+
 
 void setup() {
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
+    WiFi.softAP(AP_ssid);
+    Serial.begin(115200);
+    Serial.setDebugOutput(false);
+    Wire.begin(I2C_SDA, I2C_SCL);
+    lightMeter.begin();
+
+    IPAddress AP_LOCAL_IP(192, 168, 1, 160);
+    IPAddress AP_GATEWAY_IP(192, 168, 1, 4);
+    IPAddress AP_NETWORK_MASK(255, 255, 255, 0);
+    if (!WiFi.softAPConfig(AP_LOCAL_IP, AP_GATEWAY_IP, AP_NETWORK_MASK)) {
+        Serial.println("AP Config Failed");
+    }
+
+    horizontal_servo.attach(horizontal_servo_pin);
+    vertical_servo.attach(vertical_servo_pin);
+
+    local_IP = WiFi.softAPIP();
+
+    //pinMode(light_pin, OUTPUT);
+
+    //startCameraServer();
 
 }
-
-void loop() {
-
-}
+void loop() {}
