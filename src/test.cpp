@@ -4,7 +4,6 @@
 #include "Wire.h"
 #include "ESP32Servo.h"
 #include "esp_camera.h"
-#include "BH1750.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 
@@ -20,10 +19,6 @@ int16_t vertical_val;
 int8_t servo_move_val = 20;
 
 // camera
-#define CAM_1
-//#define CAM_2
-
-#ifdef CAM_1
     #define PWDN_GPIO_NUM     32
     #define RESET_GPIO_NUM    -1
     #define XCLK_GPIO_NUM      0
@@ -41,15 +36,9 @@ int8_t servo_move_val = 20;
     #define VSYNC_GPIO_NUM    25
     #define HREF_GPIO_NUM     23
     #define PCLK_GPIO_NUM     22
-#elif CAM_2
 
-
-#endif
 
 // wifi
-//#define WiFi_AP
-#define WiFi_STA
-
 #define AP_ssid "ESP-PTZ-1"
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -220,12 +209,14 @@ static esp_err_t cmd_handler(httpd_req_t *req) {
     else if (!strcmp(variable, "rightF")) {
         horizontal_servo.write(servo_stop_W);
     }
-
-    else if (!strcmp(variable, "init")) {
+    else{
 
     }
-
     
+
+
+    Serial.println(variable);
+
     if(res){
         return httpd_resp_send_500(req);
     }
@@ -255,15 +246,18 @@ void startCameraServer(){
 
     if (httpd_start(&camera_httpd, &config_http) == ESP_OK) {
         httpd_register_uri_handler(camera_httpd, &cmd_uri);
-
+        //httpd_register_uri_handler(camera_httpd, &camera_uri);
     }
 
+/*
     config_http.server_port += 1 ;
     config_http.ctrl_port += 1 ;
 
     if (httpd_start(&stream_httpd, &config_http) == ESP_OK) {
         httpd_register_uri_handler(stream_httpd, &camera_uri);
     }
+*/
+
 }
 
 
@@ -273,32 +267,23 @@ void setup(){
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     
     Serial.begin(115200);
+    vertical_servo.attach(vertical_servo_pin);
+    horizontal_servo.attach(horizontal_servo_pin);
 
-    #ifdef WiFi_AP
-        WiFi.softAP("ESP32-CAM-AP");
-        IPAddress AP_LOCAL_IP(192, 168, 1, 160);
-        IPAddress AP_GATEWAY_IP(192, 168, 1, 4);
-        IPAddress AP_NETWORK_MASK(255, 255, 255, 0);
-        if (!WiFi.softAPConfig(AP_LOCAL_IP, AP_GATEWAY_IP, AP_NETWORK_MASK)) {
-            Serial.println("WiFi-AP");
-        }
-        Serial.print("IP");
-        Serial.println(WiFi.softAPIP());
+    vertical_servo.write(0);
 
-    #elif WiFi_STA
-        WiFi.begin("A8", "123456789");
+        WiFi.begin("132-3", "0932713859");
         while (WiFi.status() != WL_CONNECTED) {
-        Serial.print(".");
-        delay(100);
+          Serial.print(".");
+          delay(100);
         }
         Serial.println("");
         Serial.println("WiFi-STA");
         Serial.print("IP:");
         Serial.println(WiFi.localIP());
 
-    #endif
 
-
+    startCameraServer();
     
     
 }
